@@ -1,14 +1,22 @@
 import type { OnchainSnapshot } from '../types.js'
 
 /**
- * This module is the single seam between "real data" and the rest of the app.
- * Today it returns deterministic mock data so the product works end-to-end
- * out of the box. To go live, replace the body of `fetchOnchainSnapshot`
- * with real calls, e.g.:
+ * This module is the seam between "real on-chain data" and the rest of the
+ * app, specifically for holder distribution, whale flow, and liquidity —
+ * numbers that genuinely require a paid/keyed provider. Today it returns
+ * deterministic mock data so the product works end-to-end out of the box.
  *
- *   - Holder distribution / whale flows -> Etherscan / Alchemy / Moralis token-holder APIs
+ * Note this is deliberately narrower than it once was: developer activity
+ * and market data are now sourced for real from CoinGecko's free public API
+ * (see `marketData.ts`) and no longer need to live here. What's left —
+ * holder concentration, whale accumulation, liquidity-locked % — has no
+ * genuinely free source: Etherscan's free tier doesn't expose a
+ * holder-distribution endpoint (it's gated behind their paid plans), so an
+ * ETHERSCAN_API_KEY alone can't produce real numbers for this section. To go
+ * live here, wire in one of:
+ *
+ *   - Holder distribution / whale flows -> Moralis or Alchemy token-holder APIs
  *   - Liquidity locked                  -> DEX subgraphs (Uniswap/PancakeSwap via The Graph)
- *   - Dev activity                      -> GitHub REST API (commits, contributors, releases)
  *   - Contract flags (mintable, proxy…) -> static analysis (e.g. a Slither run) or
  *                                          a contract-scanning API (GoPlus, Token Sniffer)
  *

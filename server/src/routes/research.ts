@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { z } from 'zod'
-import { fetchOnchainSnapshot } from '../services/onchainData.js'
+import { gatherResearchInputs } from '../services/researchOrchestrator.js'
 import { generateResearchReport, synthesizeFallbackReport } from '../services/aiClient.js'
 
 const router = Router()
@@ -22,22 +22,22 @@ router.post('/research', async (req, res) => {
   const { query } = parsed.data
 
   try {
-    const snapshot = await fetchOnchainSnapshot(query)
+    const inputs = await gatherResearchInputs(query)
 
     let report
     let usedFallback = false
     let fallbackReason: string | undefined
     try {
-      report = await generateResearchReport(query, snapshot)
+      report = await generateResearchReport(query, inputs)
     } catch (aiError) {
       // AI provider not configured or errored — degrade gracefully instead of failing the request.
       usedFallback = true
       fallbackReason = (aiError as Error).message
-      report = synthesizeFallbackReport(query, snapshot)
+      report = synthesizeFallbackReport(query, inputs)
       console.warn('[research] AI generation failed, served fallback report:', fallbackReason)
     }
 
-    return res.json({ report, snapshot, usedFallback, fallbackReason })
+    return res.json({ report, snapshot: inputs.onchain, usedFallback, fallbackReason })
   } catch (err) {
     console.error('[research] unexpected error:', err)
     return res.status(500).json({ error: 'Failed to generate report. Please try again.' })

@@ -1,9 +1,11 @@
-import type { OnchainSnapshot, ResearchReport } from '../types.js'
+import type { ResearchReport } from '../types.js'
+import type { ResearchInputs } from './researchOrchestrator.js'
 
 const SYSTEM_PROMPT = `You are an on-chain investment research analyst. You are given a
-structured data snapshot for a crypto token. Reason over the data and return ONLY a
-single JSON object (no markdown fences, no prose outside the JSON) matching exactly
-this shape:
+structured data snapshot for a crypto token — some of it real (live market data, GitHub
+activity, social stats) and some of it simulated where no free data provider exists (the
+snapshot tells you which is which). Reason over the data and return ONLY a single JSON
+object (no markdown fences, no prose outside the JSON) matching exactly this shape:
 
 {
   "narrative": string,            // e.g. "AI Infrastructure", "DePIN", "RWA"
@@ -20,20 +22,64 @@ this shape:
   "riskFactors": [ { "label": string, "score": number } ]  // 5-7 factors, 0-100 each
 }
 
-Be concrete and reference the specific numbers you were given. Do not invent facts
-that aren't implied by the data snapshot. If the data snapshot is marked as mock/demo
-data, still produce a fully-formed report but do not claim it reflects live markets.`
+Be concrete and reference the specific numbers you were given. Do not invent facts that
+aren't implied by the data snapshot. Never claim simulated data is live, and never claim
+live data is simulated — respect the data quality labels exactly as given. If a section is
+marked unavailable, say so plainly rather than guessing a number.`
 
-function buildUserPrompt(query: string, snapshot: OnchainSnapshot) {
+function fmt(value: number | null, suffix = ''): string {
+  return value === null ? 'not available' : `${value.toLocaleString('en-US', { maximumFractionDigits: 4 })}${suffix}`
+}
+
+function buildUserPrompt(query: string, inputs: ResearchInputs) {
+  const { onchain, market, dataQuality } = inputs
+  const m = market.marketData
+  const d = market.developerData
+  const s = market.socialData
+
   return `Token query: ${query}
 
-Data snapshot (${snapshot.isMockData ? 'DEMO DATA — not live' : 'live data'}):
-- Top holder concentration: ${snapshot.topHolderConcentrationPct}%
-- Whale net accumulation (30d): ${snapshot.whaleNetAccumulation30dPct}%
-- Liquidity locked: ${snapshot.liquidityLockedPct}%
-- GitHub commits (30d): ${snapshot.githubCommits30d}
-- Active contributors: ${snapshot.activeContributors}
-- Contract flags: ${snapshot.contractFlags.length ? snapshot.contractFlags.join(', ') : 'none detected'}
+On-chain snapshot (${dataQuality.onchain.toUpperCase()} — ${onchain.isMockData ? 'no keyed holder-data provider configured, numbers are simulated' : 'from a configured provider'}):
+- Top holder concentration: ${onchain.topHolderConcentrationPct}%
+- Whale net accumulation (30d): ${onchain.whaleNetAccumulation30dPct}%
+- Liquidity locked: ${onchain.liquidityLockedPct}%
+- Contract flags: ${onchain.contractFlags.length ? onchain.contractFlags.join(', ') : 'none detected'}
+
+Market data (${dataQuality.market.toUpperCase()}, source: CoinGecko):
+${
+  m
+    ? `- Name / symbol: ${m.name} (${m.symbol})
+- Price: $${fmt(m.currentPriceUsd)}
+- 24h change: ${fmt(m.priceChangePct24h, '%')}
+- 7d change: ${fmt(m.priceChangePct7d, '%')}
+- Market cap: $${fmt(m.marketCapUsd)} (rank ${m.marketCapRank ?? 'n/a'})
+- Fully diluted valuation: $${fmt(m.fullyDilutedValuationUsd)}
+- 24h volume: $${fmt(m.totalVolume24hUsd)}
+- Circulating / total / max supply: ${fmt(m.circulatingSupply)} / ${fmt(m.totalSupply)} / ${fmt(m.maxSupply)}
+- ATH: $${fmt(m.athUsd)} (${fmt(m.athChangePct, '%')} from ATH)`
+    : '- No CoinGecko listing could be matched for this query. Do not fabricate price or market cap figures.'
+}
+
+Developer activity (${dataQuality.developer.toUpperCase()}${d ? ', source: CoinGecko/GitHub' : ', source: simulated fallback'}):
+${
+  d
+    ? `- Commits (4wk): ${fmt(d.commitCount4Weeks)}
+- Stars / forks / subscribers: ${fmt(d.stars)} / ${fmt(d.forks)} / ${fmt(d.subscribers)}
+- Merged PRs: ${fmt(d.pullRequestsMerged)} from ${fmt(d.pullRequestContributors)} contributors
+- Open / closed issues: ${fmt(d.totalIssues)} / ${fmt(d.closedIssues)}`
+    : `- GitHub commits (30d, simulated): ${onchain.githubCommits30d}
+- Active contributors (simulated): ${onchain.activeContributors}`
+}
+
+Social / community data (${dataQuality.social.toUpperCase()}):
+${
+  s
+    ? `- Twitter/X followers: ${fmt(s.twitterFollowers)}
+- Reddit subscribers: ${fmt(s.redditSubscribers)}
+- Telegram members: ${fmt(s.telegramUsers)}
+- Community sentiment: ${fmt(s.sentimentUpPct, '% up')} / ${fmt(s.sentimentDownPct, '% down')}`
+    : '- No social data available for this token.'
+}
 
 Return the JSON report now.`
 }
@@ -43,51 +89,65 @@ function safeParseReportJson(raw: string): Record<string, unknown> {
   return JSON.parse(cleaned)
 }
 
-export function synthesizeFallbackReport(query: string, snapshot: OnchainSnapshot): ResearchReport {
-  const accumulating = snapshot.whaleNetAccumulation30dPct > 3
-  const concentrationRisk = snapshot.topHolderConcentrationPct > 45
-  const devHealthy = snapshot.githubCommits30d > 80 && snapshot.activeContributors > 5
+export function synthesizeFallbackReport(query: string, inputs: ResearchInputs): ResearchReport {
+  const { onchain, market, dataQuality } = inputs
+  const accumulating = onchain.whaleNetAccumulation30dPct > 3
+  const concentrationRisk = onchain.topHolderConcentrationPct > 45
+
+  const commits = market.developerData?.commitCount4Weeks ?? onchain.githubCommits30d
+  const contributors = market.developerData?.pullRequestContributors ?? onchain.activeContributors
+  const devHealthy = (commits ?? 0) > 80 && (contributors ?? 0) > 5
 
   const riskFactors = [
-    { label: 'Smart Contract', score: snapshot.contractFlags.length ? 62 : 92 },
-    { label: 'Liquidity', score: Math.min(98, snapshot.liquidityLockedPct + 5) },
+    { label: 'Smart Contract', score: onchain.contractFlags.length ? 62 : 92 },
+    { label: 'Liquidity', score: Math.min(98, onchain.liquidityLockedPct + 5) },
     { label: 'Developer Activity', score: devHealthy ? 90 : 58 },
-    { label: 'Holder Distribution', score: Math.max(20, 100 - snapshot.topHolderConcentrationPct) },
+    { label: 'Holder Distribution', score: Math.max(20, 100 - onchain.topHolderConcentrationPct) },
     { label: 'Whale Risk', score: accumulating ? 74 : 55 },
   ]
-  const overall = Math.round(riskFactors.reduce((s, f) => s + f.score, 0) / riskFactors.length)
+  if (market.marketData) {
+    const liquidityDepth = market.marketData.totalVolume24hUsd ?? 0
+    riskFactors.push({ label: 'Market Liquidity (24h vol)', score: liquidityDepth > 1_000_000 ? 85 : 45 })
+  }
+  const overall = Math.round(riskFactors.reduce((sum, f) => sum + f.score, 0) / riskFactors.length)
+
+  const priceContext = market.marketData?.priceChangePct24h != null
+    ? ` Price moved ${market.marketData.priceChangePct24h.toFixed(1)}% over the last 24h.`
+    : ''
 
   return {
     tokenQuery: query,
-    narrative: 'Unclassified (offline mode)',
+    narrative: market.marketData ? `${market.marketData.name} (offline analysis)` : 'Unclassified (offline mode)',
     category: 'General',
     riskScore: overall,
-    confidence: 55,
+    confidence: market.marketData ? 60 : 50,
     recommendation: accumulating ? 'Watchlist — accumulation signal' : 'Neutral',
     marketCycle: accumulating ? 'Early accumulation' : 'Range-bound',
     whaleActivity: accumulating
-      ? `Large wallets grew holdings by roughly ${snapshot.whaleNetAccumulation30dPct}% over 30 days.`
-      : `No meaningful net accumulation detected over 30 days (${snapshot.whaleNetAccumulation30dPct}%).`,
+      ? `Large wallets grew holdings by roughly ${onchain.whaleNetAccumulation30dPct}% over 30 days (simulated).${priceContext}`
+      : `No meaningful net accumulation detected over 30 days (${onchain.whaleNetAccumulation30dPct}%, simulated).${priceContext}`,
     developerActivity: devHealthy
-      ? `${snapshot.githubCommits30d} commits from ${snapshot.activeContributors} contributors in the last 30 days — active development.`
-      : `Only ${snapshot.githubCommits30d} commits from ${snapshot.activeContributors} contributors in 30 days — development pace is light.`,
+      ? `${commits ?? 0} commits from ${contributors ?? 0} contributors in the last window — active development (${dataQuality.developer}).`
+      : `Only ${commits ?? 0} commits from ${contributors ?? 0} contributors — development pace is light (${dataQuality.developer}).`,
     holderHealth: concentrationRisk
-      ? `Top holders control ${snapshot.topHolderConcentrationPct}% of supply — concentration risk is elevated.`
-      : `Top holders control ${snapshot.topHolderConcentrationPct}% of supply — distribution looks reasonably healthy.`,
+      ? `Top holders control ${onchain.topHolderConcentrationPct}% of supply — concentration risk is elevated (simulated).`
+      : `Top holders control ${onchain.topHolderConcentrationPct}% of supply — distribution looks reasonably healthy (simulated).`,
     aiAnalysis:
       `This is a locally-generated fallback report — no AI_API_KEY is configured yet, so an LLM did not ` +
-      `reason over this data. Set AI_BASE_URL / AI_API_KEY in server/.env to get full narrative analysis.`,
+      `reason over this data. Market/developer/social figures above are ${market.marketData ? 'live from CoinGecko' : 'unavailable for this token'}; ` +
+      `holder and whale figures are simulated. Set AI_BASE_URL / AI_API_KEY in server/.env for full narrative analysis.`,
     verdict: 'Configure an AI provider for a full narrative verdict.',
     riskFactors,
     generatedAt: new Date().toISOString(),
-    dataSource: snapshot.isMockData ? 'mock' : 'live',
+    dataSource: onchain.isMockData ? 'mock' : 'live',
+    marketData: market.marketData,
+    developerData: market.developerData,
+    socialData: market.socialData,
+    dataQuality,
   }
 }
 
-export async function generateResearchReport(
-  query: string,
-  snapshot: OnchainSnapshot
-): Promise<ResearchReport> {
+export async function generateResearchReport(query: string, inputs: ResearchInputs): Promise<ResearchReport> {
   const baseUrl = process.env.AI_BASE_URL
   const apiKey = process.env.AI_API_KEY
   const model = process.env.AI_MODEL || 'minimax-m3'
@@ -109,23 +169,49 @@ export async function generateResearchReport(
       temperature: 0.4,
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
-        { role: 'user', content: buildUserPrompt(query, snapshot) },
+        { role: 'user', content: buildUserPrompt(query, inputs) },
       ],
     }),
   })
 
+  // Read as text first, always — some misconfigurations (a wrong AI_BASE_URL,
+  // a CDN/proxy in front of the real API, an invalid model name on certain
+  // gateways) come back as an HTML error/landing page with a 200 status
+  // instead of a JSON error. Calling response.json() directly on that throws
+  // an opaque "Unexpected token '<'" SyntaxError that's useless for
+  // diagnosing the real problem, so we parse manually and surface a helpful
+  // message either way.
+  const rawBody = await response.text()
+
   if (!response.ok) {
-    const errText = await response.text().catch(() => '')
-    throw new Error(`AI provider error (${response.status}): ${errText.slice(0, 500)}`)
+    throw new Error(`AI provider error (${response.status}): ${rawBody.slice(0, 500)}`)
   }
 
-  const data = (await response.json()) as {
-    choices?: { message?: { content?: string } }[]
+  let data: { choices?: { message?: { content?: string } }[] }
+  try {
+    data = JSON.parse(rawBody)
+  } catch {
+    const looksLikeHtml = rawBody.trim().toLowerCase().startsWith('<!doctype') || rawBody.trim().startsWith('<html')
+    throw new Error(
+      looksLikeHtml
+        ? `AI provider returned an HTML page instead of JSON (status ${response.status}). This usually means ` +
+          `AI_BASE_URL is wrong or doesn't point at a chat-completions endpoint. Check server/.env — ` +
+          `AI_BASE_URL is currently "${baseUrl}".`
+        : `AI provider returned a non-JSON response (status ${response.status}): ${rawBody.slice(0, 300)}`
+    )
   }
+
   const content = data.choices?.[0]?.message?.content
-  if (!content) throw new Error('AI provider returned an empty response.')
+  if (!content) throw new Error('AI provider returned an empty response (no choices[0].message.content).')
 
-  const parsed = safeParseReportJson(content)
+  let parsed: Record<string, unknown>
+  try {
+    parsed = safeParseReportJson(content)
+  } catch {
+    throw new Error(
+      `AI provider's response content wasn't valid JSON. Got: ${content.slice(0, 300)}`
+    )
+  }
 
   return {
     tokenQuery: query,
@@ -144,6 +230,10 @@ export async function generateResearchReport(
       ? (parsed.riskFactors as { label: string; score: number }[])
       : [],
     generatedAt: new Date().toISOString(),
-    dataSource: snapshot.isMockData ? 'mock' : 'live',
+    dataSource: inputs.onchain.isMockData ? 'mock' : 'live',
+    marketData: inputs.market.marketData,
+    developerData: inputs.market.developerData,
+    socialData: inputs.market.socialData,
+    dataQuality: inputs.dataQuality,
   }
 }

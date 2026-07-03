@@ -1,5 +1,27 @@
+import { useState } from 'react'
 import { motion } from 'framer-motion'
-import type { ResearchReport } from '../../lib/api'
+import {
+  Check,
+  CircleSlash,
+  Copy,
+  Download,
+  ExternalLink,
+  FlaskConical,
+  GitFork,
+  Github,
+  type LucideIcon,
+  MessageCircle,
+  ShieldCheck,
+  Star,
+  ThumbsDown,
+  ThumbsUp,
+  TrendingDown,
+  TrendingUp,
+  Twitter,
+  Users,
+} from 'lucide-react'
+import type { DataQuality, ResearchReport } from '../../lib/api'
+import { copyReportToClipboard, downloadReportAsJson, downloadReportAsMarkdown } from '../../lib/reportExport'
 
 function scoreColor(score: number) {
   if (score >= 85) return '#4fd8c4'
@@ -30,6 +52,187 @@ function InsightCard({ title, body, accent }: { title: string; body: string; acc
   )
 }
 
+const QUALITY_META: Record<DataQuality, { label: string; icon: LucideIcon; color: string }> = {
+  live: { label: 'Live data', icon: ShieldCheck, color: 'var(--color-accum)' },
+  simulated: { label: 'Simulated', icon: FlaskConical, color: 'var(--color-signal)' },
+  unavailable: { label: 'Unavailable', icon: CircleSlash, color: 'var(--color-muted)' },
+}
+
+function DataQualityBadge({ quality }: { quality: DataQuality }) {
+  const meta = QUALITY_META[quality]
+  const Icon = meta.icon
+  return (
+    <span
+      className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-mono text-[10px] uppercase tracking-wider"
+      style={{ borderColor: `${meta.color}55`, color: meta.color, background: `${meta.color}14` }}
+    >
+      <Icon size={11} strokeWidth={2.25} />
+      {meta.label}
+    </span>
+  )
+}
+
+function fmtUsd(value: number | null): string {
+  if (value === null) return '—'
+  if (value >= 1) return `$${value.toLocaleString('en-US', { maximumFractionDigits: 2 })}`
+  return `$${value.toLocaleString('en-US', { maximumSignificantDigits: 4 })}`
+}
+
+function fmtCompact(value: number | null): string {
+  if (value === null) return '—'
+  return Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 2 }).format(value)
+}
+
+function MarketSnapshotSection({ report }: { report: ResearchReport }) {
+  const m = report.marketData
+  return (
+    <div className="rounded-xl border border-[var(--color-line)] bg-[var(--color-surface)] p-6">
+      <div className="mb-5 flex items-center justify-between">
+        <p className="font-mono text-xs uppercase tracking-[0.15em] text-[var(--color-data)]">Market snapshot</p>
+        <DataQualityBadge quality={report.dataQuality.market} />
+      </div>
+      {m ? (
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+          <StatTile label="Price" value={fmtUsd(m.currentPriceUsd)} />
+          <StatTile label="Market cap" value={m.marketCapUsd !== null ? `$${fmtCompact(m.marketCapUsd)}` : '—'} />
+          <StatTile label="Rank" value={m.marketCapRank !== null ? `#${m.marketCapRank}` : '—'} />
+          <StatTile label="24h volume" value={m.totalVolume24hUsd !== null ? `$${fmtCompact(m.totalVolume24hUsd)}` : '—'} />
+          <StatTile label="Circulating supply" value={fmtCompact(m.circulatingSupply)} />
+          <StatTile
+            label="ATH change"
+            value={m.athChangePct !== null ? `${m.athChangePct.toFixed(1)}%` : '—'}
+            accent={m.athChangePct !== null && m.athChangePct < -50 ? 'var(--color-risk)' : undefined}
+          />
+        </div>
+      ) : (
+        <p className="text-sm text-[var(--color-muted)]">
+          No CoinGecko listing matched this query, so live price, market cap, and supply figures aren't available.
+          Try a ticker (e.g. "PEPE") or a contract address for a listed token.
+        </p>
+      )}
+    </div>
+  )
+}
+
+function DeveloperAndSocialSection({ report }: { report: ResearchReport }) {
+  const d = report.developerData
+  const s = report.socialData
+
+  return (
+    <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+      <div className="rounded-xl border border-[var(--color-line)] bg-[var(--color-surface)] p-6">
+        <div className="mb-4 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Github size={14} className="text-[var(--color-ink)]" />
+            <p className="font-mono text-xs uppercase tracking-[0.15em] text-[var(--color-ink)]">GitHub activity</p>
+          </div>
+          <DataQualityBadge quality={report.dataQuality.developer} />
+        </div>
+        {d ? (
+          <div className="grid grid-cols-2 gap-3">
+            <StatTile label="Commits (4wk)" value={fmtCompact(d.commitCount4Weeks)} />
+            <StatTile label="Contributors" value={fmtCompact(d.pullRequestContributors)} />
+            <div className="flex items-center gap-1.5 rounded-lg border border-[var(--color-line)] bg-[var(--color-surface-2)] px-4 py-3">
+              <Star size={13} className="text-[var(--color-signal)]" />
+              <span className="font-display text-sm text-[var(--color-ink)]">{fmtCompact(d.stars)}</span>
+            </div>
+            <div className="flex items-center gap-1.5 rounded-lg border border-[var(--color-line)] bg-[var(--color-surface-2)] px-4 py-3">
+              <GitFork size={13} className="text-[var(--color-data)]" />
+              <span className="font-display text-sm text-[var(--color-ink)]">{fmtCompact(d.forks)}</span>
+            </div>
+            {d.githubUrl && (
+              <a
+                href={d.githubUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="col-span-2 inline-flex items-center gap-1.5 font-mono text-xs text-[var(--color-muted)] transition-colors hover:text-[var(--color-signal)]"
+              >
+                <ExternalLink size={12} /> View repository
+              </a>
+            )}
+          </div>
+        ) : (
+          <p className="text-sm text-[var(--color-muted)]">
+            No CoinGecko-linked GitHub repo for this token — showing simulated commit/contributor figures in the
+            narrative below instead.
+          </p>
+        )}
+      </div>
+
+      <div className="rounded-xl border border-[var(--color-line)] bg-[var(--color-surface)] p-6">
+        <div className="mb-4 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Users size={14} className="text-[var(--color-ink)]" />
+            <p className="font-mono text-xs uppercase tracking-[0.15em] text-[var(--color-ink)]">Social &amp; community</p>
+          </div>
+          <DataQualityBadge quality={report.dataQuality.social} />
+        </div>
+        {s ? (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="flex items-center gap-1.5 rounded-lg border border-[var(--color-line)] bg-[var(--color-surface-2)] px-4 py-3">
+                <Twitter size={13} className="text-[var(--color-data)]" />
+                <span className="font-display text-sm text-[var(--color-ink)]">{fmtCompact(s.twitterFollowers)}</span>
+              </div>
+              <div className="flex items-center gap-1.5 rounded-lg border border-[var(--color-line)] bg-[var(--color-surface-2)] px-4 py-3">
+                <MessageCircle size={13} className="text-[var(--color-signal)]" />
+                <span className="font-display text-sm text-[var(--color-ink)]">{fmtCompact(s.redditSubscribers)}</span>
+              </div>
+            </div>
+            {s.sentimentUpPct !== null && (
+              <div>
+                <div className="mb-1.5 flex items-center justify-between font-mono text-[11px] text-[var(--color-muted)]">
+                  <span className="flex items-center gap-1">
+                    <ThumbsUp size={11} /> {s.sentimentUpPct}%
+                  </span>
+                  <span className="flex items-center gap-1">
+                    {s.sentimentDownPct ?? 100 - s.sentimentUpPct}% <ThumbsDown size={11} />
+                  </span>
+                </div>
+                <div className="flex h-1.5 w-full overflow-hidden rounded-full bg-[var(--color-risk)]/40">
+                  <div className="h-full rounded-full bg-[var(--color-accum)]" style={{ width: `${s.sentimentUpPct}%` }} />
+                </div>
+              </div>
+            )}
+          </div>
+        ) : (
+          <p className="text-sm text-[var(--color-muted)]">No social/community data available for this token.</p>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function ReportActions({ report }: { report: ResearchReport }) {
+  const [copied, setCopied] = useState(false)
+
+  async function handleCopy() {
+    const ok = await copyReportToClipboard(report)
+    if (ok) {
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1800)
+    }
+  }
+
+  const buttonClass =
+    'inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-line)] px-3 py-1.5 font-mono text-[11px] text-[var(--color-muted)] transition-colors hover:border-[var(--color-signal)] hover:text-[var(--color-signal)]'
+
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <button onClick={handleCopy} className={buttonClass} type="button">
+        {copied ? <Check size={12} /> : <Copy size={12} />}
+        {copied ? 'Copied' : 'Copy'}
+      </button>
+      <button onClick={() => downloadReportAsMarkdown(report)} className={buttonClass} type="button">
+        <Download size={12} /> .md
+      </button>
+      <button onClick={() => downloadReportAsJson(report)} className={buttonClass} type="button">
+        <Download size={12} /> .json
+      </button>
+    </div>
+  )
+}
+
 export default function ReportView({
   report,
   usedFallback,
@@ -39,6 +242,9 @@ export default function ReportView({
   usedFallback: boolean
   fallbackReason?: string
 }) {
+  const price = report.marketData
+  const changeUp = (price?.priceChangePct24h ?? 0) >= 0
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 12 }}
@@ -47,31 +253,56 @@ export default function ReportView({
       className="space-y-8"
     >
       {/* header strip */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <p className="font-mono text-xs text-[var(--color-muted)]">query</p>
-          <h1 className="font-display text-2xl font-medium text-[var(--color-ink)] sm:text-3xl">
-            {report.tokenQuery}
-          </h1>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="flex items-center gap-3">
+          {price?.image && (
+            <img src={price.image} alt="" className="h-10 w-10 rounded-full border border-[var(--color-line)]" />
+          )}
+          <div>
+            <p className="font-mono text-xs text-[var(--color-muted)]">query</p>
+            <div className="flex flex-wrap items-baseline gap-2">
+              <h1 className="font-display text-2xl font-medium text-[var(--color-ink)] sm:text-3xl">
+                {price ? `${price.name} · ${price.symbol}` : report.tokenQuery}
+              </h1>
+              {price?.currentPriceUsd !== null && price && (
+                <span className="font-mono text-lg text-[var(--color-ink)]/80">{fmtUsd(price.currentPriceUsd)}</span>
+              )}
+              {price?.priceChangePct24h !== null && price && (
+                <span
+                  className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-mono text-xs"
+                  style={{
+                    color: changeUp ? 'var(--color-accum)' : 'var(--color-risk)',
+                    background: changeUp ? 'rgba(79,216,196,0.12)' : 'rgba(255,107,107,0.12)',
+                  }}
+                >
+                  {changeUp ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
+                  {price.priceChangePct24h?.toFixed(2)}% 24h
+                </span>
+              )}
+            </div>
+          </div>
         </div>
-        <span className="rounded-full border border-[var(--color-line)] px-3 py-1 font-mono text-[11px] text-[var(--color-muted)]">
-          {new Date(report.generatedAt).toLocaleString()}
-        </span>
+
+        <div className="flex flex-col items-end gap-2">
+          <span className="rounded-full border border-[var(--color-line)] px-3 py-1 font-mono text-[11px] text-[var(--color-muted)]">
+            {new Date(report.generatedAt).toLocaleString()}
+          </span>
+          <ReportActions report={report} />
+        </div>
       </div>
 
       {/* executive summary tiles */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-        <StatTile label="Narrative" value={report.narrative} accent="#6c8eff" />
+        <StatTile label="Narrative" value={report.narrative} accent="var(--color-data)" />
         <StatTile label="Category" value={report.category} />
-        <StatTile
-          label="Risk Score"
-          value={`${report.riskScore}/100`}
-          accent={scoreColor(report.riskScore)}
-        />
-        <StatTile label="Confidence" value={`${report.confidence}%`} accent="#4fd8c4" />
-        <StatTile label="Market Cycle" value={report.marketCycle} accent="#ffb454" />
+        <StatTile label="Risk Score" value={`${report.riskScore}/100`} accent={scoreColor(report.riskScore)} />
+        <StatTile label="Confidence" value={`${report.confidence}%`} accent="var(--color-accum)" />
+        <StatTile label="Market Cycle" value={report.marketCycle} accent="var(--color-signal)" />
         <StatTile label="Recommendation" value={report.recommendation} />
       </div>
+
+      {/* market snapshot */}
+      <MarketSnapshotSection report={report} />
 
       {/* risk factor bars */}
       {report.riskFactors.length > 0 && (
@@ -103,10 +334,13 @@ export default function ReportView({
 
       {/* insight cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <InsightCard title="Whale activity" body={report.whaleActivity} accent="#4fd8c4" />
-        <InsightCard title="Developer activity" body={report.developerActivity} accent="#6c8eff" />
-        <InsightCard title="Holder health" body={report.holderHealth} accent="#ffb454" />
+        <InsightCard title="Whale activity" body={report.whaleActivity} accent="var(--color-accum)" />
+        <InsightCard title="Developer activity" body={report.developerActivity} accent="var(--color-data)" />
+        <InsightCard title="Holder health" body={report.holderHealth} accent="var(--color-signal)" />
       </div>
+
+      {/* developer + social detail */}
+      <DeveloperAndSocialSection report={report} />
 
       {/* AI analysis */}
       <div className="crt-scan rounded-xl border border-[var(--color-line)] bg-[var(--color-surface)]/90 p-6">
@@ -129,9 +363,9 @@ export default function ReportView({
             AI call failed — served offline fallback{fallbackReason ? `: ${fallbackReason}` : ''}
           </span>
         )}
-        {report.dataSource === 'mock' && !usedFallback && (
+        {report.dataQuality.onchain === 'simulated' && (
           <span className="rounded-full border border-[var(--color-line)] px-3 py-1 font-mono text-[11px] text-[var(--color-muted)]">
-            demo on-chain data
+            holder / whale data is simulated
           </span>
         )}
       </div>

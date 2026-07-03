@@ -3,6 +3,54 @@ export interface RiskFactor {
   score: number
 }
 
+export type DataQuality = 'live' | 'simulated' | 'unavailable'
+
+export interface DataQualityMap {
+  market: DataQuality
+  developer: DataQuality
+  social: DataQuality
+  onchain: DataQuality
+}
+
+export interface MarketData {
+  id: string
+  symbol: string
+  name: string
+  image: string | null
+  currentPriceUsd: number | null
+  marketCapUsd: number | null
+  marketCapRank: number | null
+  fullyDilutedValuationUsd: number | null
+  totalVolume24hUsd: number | null
+  priceChangePct24h: number | null
+  priceChangePct7d: number | null
+  circulatingSupply: number | null
+  totalSupply: number | null
+  maxSupply: number | null
+  athUsd: number | null
+  athChangePct: number | null
+}
+
+export interface DeveloperData {
+  githubUrl: string | null
+  stars: number | null
+  forks: number | null
+  subscribers: number | null
+  totalIssues: number | null
+  closedIssues: number | null
+  pullRequestsMerged: number | null
+  pullRequestContributors: number | null
+  commitCount4Weeks: number | null
+}
+
+export interface SocialData {
+  twitterFollowers: number | null
+  redditSubscribers: number | null
+  telegramUsers: number | null
+  sentimentUpPct: number | null
+  sentimentDownPct: number | null
+}
+
 export interface ResearchReport {
   tokenQuery: string
   narrative: string
@@ -18,7 +66,12 @@ export interface ResearchReport {
   verdict: string
   riskFactors: RiskFactor[]
   generatedAt: string
+  /** @deprecated prefer dataQuality.onchain */
   dataSource: 'live' | 'mock'
+  marketData: MarketData | null
+  developerData: DeveloperData | null
+  socialData: SocialData | null
+  dataQuality: DataQualityMap
 }
 
 export interface ResearchResponse {
@@ -34,27 +87,81 @@ export interface ResearchResponse {
 // there's no dev proxy to fall back on once it's a static build.
 const API_URL = import.meta.env.PROD ? import.meta.env.VITE_API_URL || '' : ''
 
-export class ResearchApiError extends Error {}
+export class ResearchApiError extends Error {
+  /** True when the request never reached the server (offline, DNS, CORS, timeout). */
+  isNetworkError: boolean
 
-export async function requestResearchReport(query: string): Promise<ResearchResponse> {
-  let response: Response
+  constructor(message: string, isNetworkError = false) {
+    super(message)
+    this.isNetworkError = isNetworkError
+  }
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+// Status codes worth a silent retry — transient upstream/proxy issues rather
+// than something the client did wrong. 4xx errors (bad query, validation) are
+// never retried since retrying won't change the outcome.
+const RETRYABLE_STATUS = new Set([502, 503, 504])
+const MAX_ATTEMPTS = 3
+const REQUEST_TIMEOUT_MS = 30_000
+
+async function fetchOnce(query: string): Promise<Response> {
+  const controller = new AbortController()
+  const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
   try {
-    response = await fetch(`${API_URL}/api/research`, {
+    return await fetch(`${API_URL}/api/research`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ query }),
+      signal: controller.signal,
     })
-  } catch {
-    const target = API_URL || 'the API (via the Vite dev proxy)'
-    throw new ResearchApiError(
-      `Can't reach ${target}. Is the server running? (npm run dev in /server, or npm run dev from the repo root)`
-    )
+  } finally {
+    window.clearTimeout(timeout)
+  }
+}
+
+export async function requestResearchReport(query: string): Promise<ResearchResponse> {
+  let lastNetworkError: unknown
+
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    let response: Response
+    try {
+      response = await fetchOnce(query)
+    } catch (err) {
+      lastNetworkError = err
+      if (attempt < MAX_ATTEMPTS) {
+        await sleep(500 * attempt)
+        continue
+      }
+      const target = API_URL || 'the API (via the Vite dev proxy)'
+      const aborted = err instanceof DOMException && err.name === 'AbortError'
+      throw new ResearchApiError(
+        aborted
+          ? 'The request timed out. The server may be slow or unreachable — try again.'
+          : `Can't reach ${target}. Is the server running? (npm run dev in /server, or npm run dev from the repo root)`,
+        true
+      )
+    }
+
+    if (!response.ok) {
+      if (RETRYABLE_STATUS.has(response.status) && attempt < MAX_ATTEMPTS) {
+        await sleep(500 * attempt)
+        continue
+      }
+      const body = await response.json().catch(() => null)
+      throw new ResearchApiError(body?.error || `Request failed with status ${response.status}.`)
+    }
+
+    return response.json()
   }
 
-  if (!response.ok) {
-    const body = await response.json().catch(() => null)
-    throw new ResearchApiError(body?.error || `Request failed with status ${response.status}.`)
-  }
-
-  return response.json()
+  // Unreachable in practice — the loop above always returns or throws — but
+  // keeps TypeScript happy and gives a sane error if it ever is reached.
+  throw new ResearchApiError(
+    lastNetworkError instanceof Error ? lastNetworkError.message : 'Request failed after multiple attempts.',
+    true
+  )
 }
