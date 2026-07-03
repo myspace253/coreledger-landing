@@ -1,16 +1,14 @@
+import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+
 export default function Footer() {
-  function goToTerminal(prefill?: boolean) {
-    const el = document.getElementById('terminal')
-    el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-    const input = el?.querySelector('input')
-    if (input && prefill) {
-      const footerInput = document.getElementById('footer-query') as HTMLInputElement | null
-      if (footerInput?.value) {
-        input.value = footerInput.value
-        input.dispatchEvent(new Event('input', { bubbles: true }))
-      }
-    }
-    input?.focus()
+  const [query, setQuery] = useState('')
+  const navigate = useNavigate()
+
+  function launch(e: React.FormEvent) {
+    e.preventDefault()
+    const trimmed = query.trim()
+    navigate(trimmed ? `/app?q=${encodeURIComponent(trimmed)}` : '/app')
   }
 
   return (
@@ -22,15 +20,10 @@ export default function Footer() {
         <h2 className="mx-auto max-w-xl font-display text-3xl font-medium text-[var(--color-ink)] sm:text-4xl">
           Paste an address. Read the report before your coffee cools.
         </h2>
-        <form
-          onSubmit={(e) => {
-            e.preventDefault()
-            goToTerminal(true)
-          }}
-          className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row"
-        >
+        <form onSubmit={launch} className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
           <input
-            id="footer-query"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
             type="text"
             placeholder="Token address or ticker"
             className="w-full max-w-xs rounded-lg border border-[var(--color-line)] bg-[var(--color-surface-2)] px-4 py-3 font-mono text-sm text-[var(--color-ink)] outline-none placeholder:text-[var(--color-muted)] focus-visible:border-[var(--color-signal)]"

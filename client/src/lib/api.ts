@@ -24,9 +24,15 @@ export interface ResearchReport {
 export interface ResearchResponse {
   report: ResearchReport
   usedFallback: boolean
+  fallbackReason?: string
 }
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8787'
+// Dev builds ALWAYS use a relative URL, regardless of what's in .env — the Vite
+// proxy (see vite.config.ts) forwards /api/* to the Express server. This makes
+// the app immune to a stale/misconfigured VITE_API_URL in a local .env file.
+// Only a production build (`vite build`) will respect VITE_API_URL, since
+// there's no dev proxy to fall back on once it's a static build.
+const API_URL = import.meta.env.PROD ? import.meta.env.VITE_API_URL || '' : ''
 
 export class ResearchApiError extends Error {}
 
@@ -39,8 +45,9 @@ export async function requestResearchReport(query: string): Promise<ResearchResp
       body: JSON.stringify({ query }),
     })
   } catch {
+    const target = API_URL || 'the API (via the Vite dev proxy)'
     throw new ResearchApiError(
-      `Can't reach the research API at ${API_URL}. Is the server running (npm run dev in /server)?`
+      `Can't reach ${target}. Is the server running? (npm run dev in /server, or npm run dev from the repo root)`
     )
   }
 

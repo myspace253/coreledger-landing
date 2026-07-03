@@ -5,9 +5,24 @@ import researchRouter from './routes/research.js'
 
 const app = express()
 const port = Number(process.env.PORT) || 8787
-const clientOrigin = process.env.CLIENT_ORIGIN || 'http://localhost:5173'
+// Comma-separated list supported, e.g. "http://localhost:5173,https://yourapp.com".
+// With the Vite dev proxy in place this rarely matters in dev (requests arrive
+// same-origin from Vite's perspective), but it's needed if you ever call the
+// API directly from the browser, or in production.
+const allowedOrigins = (process.env.CLIENT_ORIGIN || 'http://localhost:5173')
+  .split(',')
+  .map((o) => o.trim())
+  .filter(Boolean)
 
-app.use(cors({ origin: clientOrigin }))
+app.use(
+  cors({
+    origin(origin, callback) {
+      // no Origin header (curl, server-to-server, same-origin via proxy) -> allow
+      if (!origin || allowedOrigins.includes(origin)) return callback(null, true)
+      callback(new Error(`Origin ${origin} not allowed by CORS`))
+    },
+  })
+)
 app.use(express.json({ limit: '256kb' }))
 
 app.get('/api/health', (_req, res) => {

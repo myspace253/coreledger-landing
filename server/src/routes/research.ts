@@ -26,16 +26,18 @@ router.post('/research', async (req, res) => {
 
     let report
     let usedFallback = false
+    let fallbackReason: string | undefined
     try {
       report = await generateResearchReport(query, snapshot)
     } catch (aiError) {
       // AI provider not configured or errored — degrade gracefully instead of failing the request.
       usedFallback = true
+      fallbackReason = (aiError as Error).message
       report = synthesizeFallbackReport(query, snapshot)
-      console.warn('[research] AI generation failed, served fallback report:', (aiError as Error).message)
+      console.warn('[research] AI generation failed, served fallback report:', fallbackReason)
     }
 
-    return res.json({ report, snapshot, usedFallback })
+    return res.json({ report, snapshot, usedFallback, fallbackReason })
   } catch (err) {
     console.error('[research] unexpected error:', err)
     return res.status(500).json({ error: 'Failed to generate report. Please try again.' })
