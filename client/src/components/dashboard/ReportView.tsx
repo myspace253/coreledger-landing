@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { motion } from 'framer-motion'
 import {
+  AlertTriangle,
   Check,
   CircleSlash,
   Copy,
@@ -9,6 +10,7 @@ import {
   FlaskConical,
   GitFork,
   Github,
+  Link2,
   type LucideIcon,
   MessageCircle,
   ShieldCheck,
@@ -22,6 +24,8 @@ import {
 } from 'lucide-react'
 import type { DataQuality, ResearchReport } from '../../lib/api'
 import { copyReportToClipboard, downloadReportAsJson, downloadReportAsMarkdown } from '../../lib/reportExport'
+import RiskGauge from './RiskGauge'
+import Sparkline from './Sparkline'
 
 function scoreColor(score: number) {
   if (score >= 85) return '#4fd8c4'
@@ -92,17 +96,30 @@ function MarketSnapshotSection({ report }: { report: ResearchReport }) {
         <DataQualityBadge quality={report.dataQuality.market} />
       </div>
       {m ? (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-          <StatTile label="Price" value={fmtUsd(m.currentPriceUsd)} />
-          <StatTile label="Market cap" value={m.marketCapUsd !== null ? `$${fmtCompact(m.marketCapUsd)}` : '—'} />
-          <StatTile label="Rank" value={m.marketCapRank !== null ? `#${m.marketCapRank}` : '—'} />
-          <StatTile label="24h volume" value={m.totalVolume24hUsd !== null ? `$${fmtCompact(m.totalVolume24hUsd)}` : '—'} />
-          <StatTile label="Circulating supply" value={fmtCompact(m.circulatingSupply)} />
-          <StatTile
-            label="ATH change"
-            value={m.athChangePct !== null ? `${m.athChangePct.toFixed(1)}%` : '—'}
-            accent={m.athChangePct !== null && m.athChangePct < -50 ? 'var(--color-risk)' : undefined}
-          />
+        <div>
+          {m.sparkline7d && m.sparkline7d.length > 1 && (
+            <div className="mb-4 rounded-lg border border-[var(--color-line)] bg-[var(--color-surface-2)]/50 p-3">
+              <div className="mb-2 flex items-center justify-between font-mono text-[10px] uppercase tracking-wider text-[var(--color-muted)]">
+                <span>7-day price trend</span>
+                <span style={{ color: (m.priceChangePct7d ?? 0) >= 0 ? 'var(--color-accum)' : 'var(--color-risk)' }}>
+                  {m.priceChangePct7d !== null ? `${m.priceChangePct7d >= 0 ? '+' : ''}${m.priceChangePct7d.toFixed(1)}%` : ''}
+                </span>
+              </div>
+              <Sparkline data={m.sparkline7d} positive={(m.priceChangePct7d ?? 0) >= 0} />
+            </div>
+          )}
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+            <StatTile label="Price" value={fmtUsd(m.currentPriceUsd)} />
+            <StatTile label="Market cap" value={m.marketCapUsd !== null ? `$${fmtCompact(m.marketCapUsd)}` : '—'} />
+            <StatTile label="Rank" value={m.marketCapRank !== null ? `#${m.marketCapRank}` : '—'} />
+            <StatTile label="24h volume" value={m.totalVolume24hUsd !== null ? `$${fmtCompact(m.totalVolume24hUsd)}` : '—'} />
+            <StatTile label="Circulating supply" value={fmtCompact(m.circulatingSupply)} />
+            <StatTile
+              label="ATH change"
+              value={m.athChangePct !== null ? `${m.athChangePct.toFixed(1)}%` : '—'}
+              accent={m.athChangePct !== null && m.athChangePct < -50 ? 'var(--color-risk)' : undefined}
+            />
+          </div>
         </div>
       ) : (
         <p className="text-sm text-[var(--color-muted)]">
@@ -172,13 +189,26 @@ function DeveloperAndSocialSection({ report }: { report: ResearchReport }) {
             <div className="grid grid-cols-2 gap-3">
               <div className="flex items-center gap-1.5 rounded-lg border border-[var(--color-line)] bg-[var(--color-surface-2)] px-4 py-3">
                 <Twitter size={13} className="text-[var(--color-data)]" />
-                <span className="font-display text-sm text-[var(--color-ink)]">{fmtCompact(s.twitterFollowers)}</span>
+                <span className="font-display text-sm text-[var(--color-ink)]">
+                  {s.twitterFollowers !== null ? fmtCompact(s.twitterFollowers) : 'n/a'}
+                </span>
+                {s.twitterDataCaveat && (
+                  <span className="ml-auto shrink-0" title={s.twitterDataCaveat}>
+                    <AlertTriangle size={12} className="text-[var(--color-signal)]" />
+                  </span>
+                )}
               </div>
               <div className="flex items-center gap-1.5 rounded-lg border border-[var(--color-line)] bg-[var(--color-surface-2)] px-4 py-3">
                 <MessageCircle size={13} className="text-[var(--color-signal)]" />
                 <span className="font-display text-sm text-[var(--color-ink)]">{fmtCompact(s.redditSubscribers)}</span>
               </div>
             </div>
+            {s.twitterDataCaveat && (
+              <p className="flex items-start gap-1.5 font-mono text-[10px] leading-relaxed text-[var(--color-muted)]">
+                <AlertTriangle size={11} className="mt-0.5 shrink-0 text-[var(--color-signal)]" />
+                {s.twitterDataCaveat}
+              </p>
+            )}
             {s.sentimentUpPct !== null && (
               <div>
                 <div className="mb-1.5 flex items-center justify-between font-mono text-[11px] text-[var(--color-muted)]">
@@ -204,13 +234,25 @@ function DeveloperAndSocialSection({ report }: { report: ResearchReport }) {
 }
 
 function ReportActions({ report }: { report: ResearchReport }) {
-  const [copied, setCopied] = useState(false)
+  const [copied, setCopied] = useState<'markdown' | 'link' | null>(null)
+
+  function flash(kind: 'markdown' | 'link') {
+    setCopied(kind)
+    window.setTimeout(() => setCopied(null), 1800)
+  }
 
   async function handleCopy() {
     const ok = await copyReportToClipboard(report)
-    if (ok) {
-      setCopied(true)
-      window.setTimeout(() => setCopied(false), 1800)
+    if (ok) flash('markdown')
+  }
+
+  async function handleShare() {
+    const url = `${window.location.origin}/app?q=${encodeURIComponent(report.tokenQuery)}`
+    try {
+      await navigator.clipboard.writeText(url)
+      flash('link')
+    } catch {
+      // clipboard unavailable — nothing to fall back to here, fail silently
     }
   }
 
@@ -219,9 +261,13 @@ function ReportActions({ report }: { report: ResearchReport }) {
 
   return (
     <div className="flex flex-wrap items-center gap-2">
+      <button onClick={handleShare} className={buttonClass} type="button">
+        {copied === 'link' ? <Check size={12} /> : <Link2 size={12} />}
+        {copied === 'link' ? 'Link copied' : 'Share'}
+      </button>
       <button onClick={handleCopy} className={buttonClass} type="button">
-        {copied ? <Check size={12} /> : <Copy size={12} />}
-        {copied ? 'Copied' : 'Copy'}
+        {copied === 'markdown' ? <Check size={12} /> : <Copy size={12} />}
+        {copied === 'markdown' ? 'Copied' : 'Copy'}
       </button>
       <button onClick={() => downloadReportAsMarkdown(report)} className={buttonClass} type="button">
         <Download size={12} /> .md
@@ -295,7 +341,10 @@ export default function ReportView({
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
         <StatTile label="Narrative" value={report.narrative} accent="var(--color-data)" />
         <StatTile label="Category" value={report.category} />
-        <StatTile label="Risk Score" value={`${report.riskScore}/100`} accent={scoreColor(report.riskScore)} />
+        <div className="rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] p-4">
+          <p className="mb-1.5 font-mono text-[11px] uppercase tracking-wider text-[var(--color-muted)]">Risk Score</p>
+          <RiskGauge score={report.riskScore} size={48} />
+        </div>
         <StatTile label="Confidence" value={`${report.confidence}%`} accent="var(--color-accum)" />
         <StatTile label="Market Cycle" value={report.marketCycle} accent="var(--color-signal)" />
         <StatTile label="Recommendation" value={report.recommendation} />

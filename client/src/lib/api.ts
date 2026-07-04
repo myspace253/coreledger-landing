@@ -29,6 +29,8 @@ export interface MarketData {
   maxSupply: number | null
   athUsd: number | null
   athChangePct: number | null
+  /** 7-day hourly price series in USD, oldest first. Null if unavailable. */
+  sparkline7d: number[] | null
 }
 
 export interface DeveloperData {
@@ -45,6 +47,7 @@ export interface DeveloperData {
 
 export interface SocialData {
   twitterFollowers: number | null
+  twitterDataCaveat: string | null
   redditSubscribers: number | null
   telegramUsers: number | null
   sentimentUpPct: number | null
@@ -164,4 +167,28 @@ export async function requestResearchReport(query: string): Promise<ResearchResp
     lastNetworkError instanceof Error ? lastNetworkError.message : 'Request failed after multiple attempts.',
     true
   )
+}
+
+export interface TrendingToken {
+  id: string
+  name: string
+  symbol: string
+  thumb: string | null
+  marketCapRank: number | null
+}
+
+/**
+ * Best-effort only — this powers the idle-screen suggestions, not a core
+ * flow, so failures are swallowed and just result in an empty list (the
+ * caller falls back to static examples) rather than surfacing an error.
+ */
+export async function fetchTrendingTokens(): Promise<TrendingToken[]> {
+  try {
+    const res = await fetch(`${API_URL}/api/trending`)
+    if (!res.ok) return []
+    const data = await res.json()
+    return Array.isArray(data?.tokens) ? data.tokens : []
+  } catch {
+    return []
+  }
 }

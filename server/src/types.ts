@@ -3,6 +3,14 @@ export interface RiskFactor {
   score: number // 0-100
 }
 
+export interface TrendingToken {
+  id: string
+  name: string
+  symbol: string
+  thumb: string | null
+  marketCapRank: number | null
+}
+
 /**
  * Per-section provenance so the client can render an honest "live vs
  * simulated" badge instead of presenting everything as equally authoritative.
@@ -37,6 +45,8 @@ export interface MarketData {
   maxSupply: number | null
   athUsd: number | null
   athChangePct: number | null
+  /** 7-day hourly price series in USD, oldest first. Null if unavailable. */
+  sparkline7d: number[] | null
 }
 
 export interface DeveloperData {
@@ -53,6 +63,12 @@ export interface DeveloperData {
 
 export interface SocialData {
   twitterFollowers: number | null
+  /**
+   * Non-null whenever twitterFollowers is present, warning that CoinGecko's
+   * X/Twitter follower counts are frequently stale/frozen since X locked
+   * down third-party API access in 2023. See marketData.ts for detail.
+   */
+  twitterDataCaveat: string | null
   redditSubscribers: number | null
   telegramUsers: number | null
   sentimentUpPct: number | null

@@ -1,15 +1,19 @@
-import { useEffect } from 'react'
+import { lazy, Suspense, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import { useNavigate } from 'react-router-dom'
 import gsap from 'gsap'
 import ScrollTrigger from 'gsap/ScrollTrigger'
 import SmoothScroll from '../components/SmoothScroll'
-import NodeSphere from '../components/NodeSphere'
 import ReportTerminal from '../components/ReportTerminal'
 import Modules from '../components/Modules'
 import RiskPanel from '../components/RiskPanel'
 import StackStrip from '../components/StackStrip'
 import Footer from '../components/Footer'
+
+// three.js is a heavy dependency and NodeSphere is purely decorative (a
+// spinning hero visual below the fold of interactivity) — code-split it out
+// of the initial bundle rather than paying for it on every page load.
+const NodeSphere = lazy(() => import('../components/NodeSphere'))
 
 gsap.registerPlugin(ScrollTrigger)
 
@@ -62,7 +66,9 @@ function Hero() {
   return (
     <section className="relative mx-auto max-w-6xl px-6 pb-24 pt-40 sm:px-8 sm:pt-48">
       <div className="pointer-events-none absolute right-[-10%] top-0 h-[560px] w-[560px] opacity-70 sm:right-0">
-        <NodeSphere />
+        <Suspense fallback={null}>
+          <NodeSphere />
+        </Suspense>
       </div>
       <motion.p
         initial={{ opacity: 0, y: 12 }}

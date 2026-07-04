@@ -45,7 +45,9 @@ export function reportToMarkdown(report: ResearchReport): string {
   if (report.socialData) {
     const s = report.socialData
     lines.push(`## Social (${report.dataQuality.social})`)
-    lines.push(`- Twitter/X followers: ${fmtNum(s.twitterFollowers)}`)
+    lines.push(
+      `- Twitter/X followers: ${fmtNum(s.twitterFollowers)}${s.twitterDataCaveat ? ` (⚠️ ${s.twitterDataCaveat})` : ''}`
+    )
     lines.push(`- Reddit subscribers: ${fmtNum(s.redditSubscribers)}`)
     lines.push(`- Sentiment: ${s.sentimentUpPct ?? 'n/a'}% up / ${s.sentimentDownPct ?? 'n/a'}% down`)
     lines.push('')

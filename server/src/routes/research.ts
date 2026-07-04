@@ -13,6 +13,23 @@ const requestSchema = z.object({
     .max(120),
 })
 
+/**
+ * The raw AI error message is genuinely useful during local development
+ * (it's exactly what let us diagnose doubled endpoint paths, insufficient
+ * credit, wrong hosts, etc. turn by turn) so it's passed through as-is
+ * outside production. In production, showing raw upstream error bodies
+ * (which can contain internal URLs, provider account details, or stray
+ * HTML from a misrouted request) to every visitor is an information leak,
+ * so it's collapsed to a short, safe summary there — the full detail is
+ * still in the server logs via console.warn below.
+ */
+function sanitizeFallbackReasonForClient(message: string): string {
+  if (process.env.NODE_ENV !== 'production') return message
+  const looksLikeHtml = message.trim().toLowerCase().startsWith('<') || message.includes('<!doctype')
+  if (looksLikeHtml) return 'AI provider returned an unexpected response.'
+  return message.length > 200 ? `${message.slice(0, 200)}…` : message
+}
+
 router.post('/research', async (req, res) => {
   const parsed = requestSchema.safeParse(req.body)
   if (!parsed.success) {
@@ -31,10 +48,11 @@ router.post('/research', async (req, res) => {
       report = await generateResearchReport(query, inputs)
     } catch (aiError) {
       // AI provider not configured or errored — degrade gracefully instead of failing the request.
+      const fullReason = (aiError as Error).message
       usedFallback = true
-      fallbackReason = (aiError as Error).message
+      fallbackReason = sanitizeFallbackReasonForClient(fullReason)
       report = synthesizeFallbackReport(query, inputs)
-      console.warn('[research] AI generation failed, served fallback report:', fallbackReason)
+      console.warn('[research] AI generation failed, served fallback report:', fullReason)
     }
 
     return res.json({ report, snapshot: inputs.onchain, usedFallback, fallbackReason })

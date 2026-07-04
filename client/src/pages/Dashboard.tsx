@@ -1,15 +1,17 @@
 import { useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
-import { Clock, History, RotateCcw, Trash2, WifiOff } from 'lucide-react'
-import { requestResearchReport, ResearchApiError, type ResearchReport } from '../lib/api'
+import { Clock, Flame, History, RotateCcw, Trash2, WifiOff } from 'lucide-react'
+import { fetchTrendingTokens, requestResearchReport, ResearchApiError, type ResearchReport, type TrendingToken } from '../lib/api'
 import { addRecentSearch, clearRecentSearches, getRecentSearches, type RecentSearch } from '../lib/searchHistory'
 import LoadingScan from '../components/dashboard/LoadingScan'
 import ReportView from '../components/dashboard/ReportView'
 
 type Status = 'idle' | 'loading' | 'done' | 'error'
 
-const EXAMPLE_QUERIES = ['0x71C7…9e2A', 'PEPE', 'ARB', 'LINK']
+// Shown only if the live trending-tokens fetch fails or hasn't resolved yet —
+// a static safety net, not the primary experience.
+const FALLBACK_EXAMPLE_QUERIES = ['0x71C7…9e2A', 'PEPE', 'ARB', 'LINK']
 
 function timeAgo(timestamp: number): string {
   const seconds = Math.round((Date.now() - timestamp) / 1000)
@@ -31,9 +33,11 @@ export default function Dashboard() {
   const [errorMsg, setErrorMsg] = useState('')
   const [errorIsNetwork, setErrorIsNetwork] = useState(false)
   const [recent, setRecent] = useState<RecentSearch[]>([])
+  const [trending, setTrending] = useState<TrendingToken[]>([])
 
   useEffect(() => {
     setRecent(getRecentSearches())
+    fetchTrendingTokens().then(setTrending)
   }, [])
 
   async function runResearch(query: string) {
@@ -110,8 +114,11 @@ export default function Dashboard() {
 
         {status === 'idle' && (
           <div className="mt-3 flex flex-wrap items-center gap-2">
-            <span className="font-mono text-xs text-[var(--color-muted)]">Try:</span>
-            {EXAMPLE_QUERIES.map((q) => (
+            <span className="flex items-center gap-1 font-mono text-xs text-[var(--color-muted)]">
+              {trending.length > 0 && <Flame size={12} className="text-[var(--color-signal)]" />}
+              {trending.length > 0 ? 'Trending now:' : 'Try:'}
+            </span>
+            {(trending.length > 0 ? trending.map((t) => t.symbol) : FALLBACK_EXAMPLE_QUERIES).map((q) => (
               <button
                 key={q}
                 onClick={() => {
@@ -161,7 +168,7 @@ export default function Dashboard() {
           </div>
         )}
 
-        <div className="mt-10">
+        <div className="mt-10" aria-live="polite" aria-busy={status === 'loading'}>
           <AnimatePresence mode="wait">
             {status === 'idle' && (
               <motion.div
