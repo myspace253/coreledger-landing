@@ -8,6 +8,21 @@ import { checkAiBaseUrlForCommonMistakes } from './services/aiClient.js'
 
 const app = express()
 const port = Number(process.env.PORT) || 8787
+
+// Needed whenever this runs behind any reverse proxy (Codespaces' dev proxy,
+// or most PaaS hosts like Render/Railway/Heroku in production) — those add
+// an X-Forwarded-For header with the real client IP. Without telling Express
+// to trust it, express-rate-limit refuses to use that header (correctly —
+// blindly trusting an unvalidated header would let anyone spoof their IP to
+// dodge the rate limit) and logs a noisy ERR_ERL_UNEXPECTED_X_FORWARDED_FOR
+// warning instead. TRUST_PROXY_HOPS lets you tune this per-deployment:
+//   - 1 hop is correct for a single reverse proxy in front of this server
+//     (Codespaces, Render, Railway, Heroku, a single nginx/ALB in front)
+//   - 0 (or unset) disables it — correct only if this server is reachable
+//     directly with no proxy in front, since trusting proxy headers with no
+//     real proxy present is exactly the spoofing vector this guards against
+const trustProxyHops = Number(process.env.TRUST_PROXY_HOPS) || 0
+if (trustProxyHops > 0) app.set('trust proxy', trustProxyHops)
 // Comma-separated list supported, e.g. "http://localhost:5173,https://yourapp.com".
 // With the Vite dev proxy in place this rarely matters in dev (requests arrive
 // same-origin from Vite's perspective), but it's needed if you ever call the
